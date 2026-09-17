@@ -8,6 +8,7 @@ from open_webui.config import (
     PGVECTOR_HNSW_M,
     PGVECTOR_INDEX_METHOD,
     PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH,
+    PGVECTOR_ITERATIVE_SCAN,
     PGVECTOR_IVFFLAT_LISTS,
     PGVECTOR_PGCRYPTO,
     PGVECTOR_PGCRYPTO_KEY,
@@ -86,6 +87,9 @@ class DocumentChunk(Base):
 
 class PgvectorClient(VectorDBBase):
     def __init__(self) -> None:
+        # Whether this pgvector build exposes <method>.iterative_scan, per method.
+        self._iterative_scan_support: Dict[str, bool] = {}
+
         # if no pgvector uri, use the existing database connection
         if not PGVECTOR_DB_URL:
             self.session = ScopedSession
@@ -152,6 +156,8 @@ class PgvectorClient(VectorDBBase):
             Base.metadata.create_all(bind=connection)
 
             index_method, index_options = self._vector_index_configuration()
+            self._index_method = index_method
+            self._index_options = index_options
             self._ensure_vector_index(index_method, index_options)
             self._ensure_text_search_index()
 
@@ -407,6 +413,57 @@ class PgvectorClient(VectorDBBase):
             log.exception(f'Error during upsert: {e}')
             raise
 
+    def _apply_iterative_scan(self) -> None:
+        """Let pgvector keep walking the index until enough rows survive the filter.
+
+        Without this the scan stops after the first `ef_search` (or `probes`)
+        candidates, and whatever fraction of them belongs to the collection being
+        searched is all the caller gets. The GUC is method-specific, and
+        `strict_order` exists only for HNSW.
+
+        pgvector registers its settings when its library is first loaded into a
+        backend, and that only happens on first use of the vector type. Setting
+        one before then raises `unrecognized configuration parameter`, which
+        would abort the caller's transaction -- so the type is touched once per
+        connection first. Loading is process-level, so it survives the rollback
+        a read-only search ends with.
+        """
+        if PGVECTOR_ITERATIVE_SCAN == 'off':
+            return
+
+        # Resolved once in __init__: vector_index_configuration() logs at INFO
+        # when PGVECTOR_INDEX_METHOD is set, and this runs on every search.
+        method = self._index_method
+        connection = self.session.connection()
+        if not connection.info.get('pgvector_settings_registered'):
+            self.session.execute(text("SELECT '[1]'::vector"))
+            connection.info['pgvector_settings_registered'] = True
+
+        if not self._supports_iterative_scan(method):
+            return
+
+        mode = 'relaxed_order' if method == 'ivfflat' else PGVECTOR_ITERATIVE_SCAN
+        self.session.execute(text(f"SET LOCAL {method}.iterative_scan = '{mode}'"))
+
+    def _supports_iterative_scan(self, method: str) -> bool:
+        """Whether this pgvector build knows the setting. Looked up once."""
+        if method in self._iterative_scan_support:
+            return self._iterative_scan_support[method]
+
+        supported = bool(
+            self.session.execute(
+                text('SELECT 1 FROM pg_settings WHERE name = :name'),
+                {'name': f'{method}.iterative_scan'},
+            ).scalar()
+        )
+        if not supported:
+            log.info(
+                'This pgvector build has no %s.iterative_scan; searches keep the default scan behaviour.',
+                method,
+            )
+        self._iterative_scan_support[method] = supported
+        return supported
+
     def search(
         self,
         collection_name: str,
@@ -503,6 +560,7 @@ class PgvectorClient(VectorDBBase):
                 .order_by(query_vectors.c.qid, subq.c.distance)
             )
 
+            self._apply_iterative_scan()
             result_proxy = self.session.execute(stmt)
             results = result_proxy.all()
 
