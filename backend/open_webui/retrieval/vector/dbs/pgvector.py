@@ -512,6 +512,13 @@ class PgvectorClient(VectorDBBase):
             metadatas = [[] for _ in range(num_queries)]
 
             if not results:
+                # Same rollback as the populated path below. Without it the
+                # session keeps its transaction, and with it the pooled
+                # connection: one thread per empty search, until the pool is
+                # gone. An empty result is not an unusual case -- it is what a
+                # filtered index scan returns when none of its candidates
+                # belong to the collection being searched.
+                self.session.rollback()
                 return SearchResult(
                     ids=ids,
                     distances=distances,
@@ -631,6 +638,7 @@ class PgvectorClient(VectorDBBase):
                 results = query.all()
 
             if not results:
+                self.session.rollback()  # read-only transaction
                 return None
 
             ids = [[result.id for result in results]]
@@ -670,6 +678,7 @@ class PgvectorClient(VectorDBBase):
                 results = query.all()
 
                 if not results:
+                    self.session.rollback()  # read-only transaction
                     return None
 
                 ids = [[result.id for result in results]]
