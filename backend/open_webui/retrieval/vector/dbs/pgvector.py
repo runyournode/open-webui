@@ -1,4 +1,8 @@
+import hashlib
 import logging
+import re
+import threading
+import zlib
 from typing import Any, Dict, List, Optional, Tuple
 
 from open_webui.config import (
@@ -10,6 +14,9 @@ from open_webui.config import (
     PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH,
     PGVECTOR_ITERATIVE_SCAN,
     PGVECTOR_IVFFLAT_LISTS,
+    PGVECTOR_PARTITION_BUCKETS,
+    PGVECTOR_PARTITION_DEDICATED_PATTERN,
+    PGVECTOR_PARTITIONING,
     PGVECTOR_PGCRYPTO,
     PGVECTOR_PGCRYPTO_KEY,
     PGVECTOR_POOL_MAX_OVERFLOW,
@@ -61,6 +68,73 @@ Base = declarative_base()
 
 log = logging.getLogger(__name__)
 
+# PostgreSQL folds unquoted identifiers to lower case and truncates them at 63
+# bytes, while collection names are application strings of up to 255 characters.
+# Partition names are therefore derived, never interpolated: a readable slug for
+# operators plus a digest of the full name to keep them unique.
+PARTITION_PREFIX = 'document_chunk_p_'
+BUCKET_PREFIX = 'document_chunk_b'
+BUCKET_PART_KEY_PREFIX = 'bucket_'
+# `pg_advisory_xact_lock(classid, objid)` is namespaced by this classid so it
+# cannot collide with any other advisory lock taken against the same database.
+PARTITION_ADVISORY_CLASSID = 0x4F57_5043 - 2**31
+# Bucket creation at startup takes one fixed key; dedicated partitions take one
+# derived from their part_key.
+BUCKETS_ADVISORY_OBJID = zlib.crc32(BUCKET_PART_KEY_PREFIX.encode('utf-8')) - 2**31
+PARTITION_LOCK_TIMEOUT_MS = 3000
+PARTITION_LOCK_RETRIES = 3
+_SLUG_MAX = 16
+_UNSAFE_IDENT = re.compile(r'[^a-z0-9_]+')
+
+try:
+    _DEDICATED_RE = re.compile(PGVECTOR_PARTITION_DEDICATED_PATTERN)
+except re.error:
+    log.exception(
+        'PGVECTOR_PARTITION_DEDICATED_PATTERN is not a valid regular expression; '
+        'falling back to bucketing every collection.'
+    )
+    # Matches nothing, so every collection is bucketed. Degrading to "all
+    # buckets" keeps the install working; the alternative, a partition per
+    # collection, would not.
+    _DEDICATED_RE = re.compile(r'(?!)')
+
+
+def is_dedicated_collection(collection_name: str) -> bool:
+    """Whether this collection gets a partition (and vector index) of its own.
+
+    Allow-list by design. Open WebUI creates a collection per uploaded file, per
+    user memory, per web search and per processed text or URL; giving each of
+    those a partition would put DDL in the ingestion path and leave the table
+    with an unbounded number of partitions. Anything not matched here is hashed
+    into a bucket instead.
+    """
+    return bool(_DEDICATED_RE.search(collection_name))
+
+
+def part_key_for(collection_name: str) -> str:
+    """Map a collection name to its partition key.
+
+    Must stay a pure function of the name: readers recompute it locally rather
+    than reading it back, so any history- or size-dependent routing would send
+    reads to the wrong partition. `zlib.crc32` is used rather than PostgreSQL's
+    `hashtext()` because its output is stable across server versions -- rows
+    hashed by `hashtext()` would silently land in the wrong bucket after a major
+    upgrade.
+    """
+    if is_dedicated_collection(collection_name):
+        return collection_name
+    bucket = zlib.crc32(collection_name.encode('utf-8')) % PGVECTOR_PARTITION_BUCKETS
+    return f'{BUCKET_PART_KEY_PREFIX}{bucket}'
+
+
+def partition_name_for(part_key: str) -> str:
+    """Name of the partition holding `part_key`. A safe SQL identifier."""
+    if part_key.startswith(BUCKET_PART_KEY_PREFIX):
+        return f'{BUCKET_PREFIX}{part_key[len(BUCKET_PART_KEY_PREFIX) :]}'
+    slug = _UNSAFE_IDENT.sub('_', part_key.lower())[:_SLUG_MAX].strip('_')
+    digest = hashlib.sha1(part_key.encode('utf-8')).hexdigest()[:12]
+    return f'{PARTITION_PREFIX}{slug}_{digest}' if slug else f'{PARTITION_PREFIX}{digest}'
+
 
 def pgcrypto_encrypt(val, key):
     return func.pgp_sym_encrypt(val, literal(key))
@@ -70,12 +144,49 @@ def pgcrypto_decrypt(col, key, outtype='text'):
     return func.cast(func.pgp_sym_decrypt(col, literal(key)), outtype)
 
 
+def vector_index_configuration() -> Tuple[str, str]:
+    """Index method and options for a vector index, from configuration.
+
+    Module level so the partition migration builds indexes by exactly the same
+    rules the running backend would.
+    """
+    if PGVECTOR_INDEX_METHOD:
+        index_method = PGVECTOR_INDEX_METHOD
+        log.info(
+            "Using vector index method '%s' from PGVECTOR_INDEX_METHOD.",
+            index_method,
+        )
+    elif USE_HALFVEC:
+        index_method = 'hnsw'
+        log.info(
+            'VECTOR_LENGTH=%s exceeds 2000; using halfvec column type with hnsw index.',
+            VECTOR_LENGTH,
+        )
+    else:
+        index_method = 'ivfflat'
+
+    if index_method == 'hnsw':
+        index_options = f'WITH (m = {PGVECTOR_HNSW_M}, ef_construction = {PGVECTOR_HNSW_EF_CONSTRUCTION})'
+    else:
+        index_options = f'WITH (lists = {PGVECTOR_IVFFLAT_LISTS})'
+
+    return index_method, index_options
+
+
 class DocumentChunk(Base):
     __tablename__ = 'document_chunk'
 
     id = Column(Text, primary_key=True)
     vector = Column(VECTOR_TYPE_FACTORY(dim=VECTOR_LENGTH), nullable=True)
     collection_name = Column(Text, nullable=False)
+
+    if PGVECTOR_PARTITIONING:
+        # PostgreSQL requires the partition key in every unique constraint, so
+        # the primary key becomes composite. Chunk ids are uuid4 and the
+        # knowledge-base copy of a file is inserted with fresh ids, so nothing
+        # relies on `id` being unique on its own.
+        part_key = Column(Text, primary_key=True, nullable=False)
+        __table_args__ = {'postgresql_partition_by': 'LIST (part_key)'}
 
     if PGVECTOR_PGCRYPTO:
         text = Column(LargeBinary, nullable=True)
@@ -87,6 +198,11 @@ class DocumentChunk(Base):
 
 class PgvectorClient(VectorDBBase):
     def __init__(self) -> None:
+        # Partitions already known to exist. `AsyncVectorDBClient` dispatches
+        # every call through `asyncio.to_thread`, so this is shared between
+        # threads of one worker as well as being per-process.
+        self._known_part_keys: set[str] = set()
+        self._partition_lock = threading.Lock()
         # Whether this pgvector build exposes <method>.iterative_scan, per method.
         self._iterative_scan_support: Dict[str, bool] = {}
 
@@ -146,6 +262,11 @@ class PgvectorClient(VectorDBBase):
                 if not PGVECTOR_PGCRYPTO_KEY:
                     raise ValueError('PGVECTOR_PGCRYPTO_KEY must be set when PGVECTOR_PGCRYPTO is enabled.')
 
+            # Refuse to run against a table whose shape contradicts the flag.
+            # Must happen before create_all, which silently skips a table that
+            # already exists.
+            self.check_partitioning_matches_schema()
+
             # Check vector length consistency
             self.check_vector_length()
 
@@ -158,14 +279,23 @@ class PgvectorClient(VectorDBBase):
             index_method, index_options = self._vector_index_configuration()
             self._index_method = index_method
             self._index_options = index_options
-            self._ensure_vector_index(index_method, index_options)
-            self._ensure_text_search_index()
 
-            self.session.execute(
-                text(
-                    'CREATE INDEX IF NOT EXISTS idx_document_chunk_collection_name ON document_chunk (collection_name);'
+            if PGVECTOR_PARTITIONING:
+                # Indexes must never be created on the parent: a partitioned
+                # index cascades to every partition, which would put a vector
+                # index back on the buckets and undo the whole point. Each
+                # partition is indexed individually instead.
+                self._ensure_buckets()
+            else:
+                self._ensure_vector_index(index_method, index_options)
+                self._ensure_text_search_index()
+
+                self.session.execute(
+                    text(
+                        'CREATE INDEX IF NOT EXISTS idx_document_chunk_collection_name '
+                        'ON document_chunk (collection_name);'
+                    )
                 )
-            )
             self.session.commit()
             log.info('Initialization complete.')
         except Exception as e:
@@ -184,39 +314,24 @@ class PgvectorClient(VectorDBBase):
             return None
 
     def _vector_index_configuration(self) -> Tuple[str, str]:
-        if PGVECTOR_INDEX_METHOD:
-            index_method = PGVECTOR_INDEX_METHOD
-            log.info(
-                "Using vector index method '%s' from PGVECTOR_INDEX_METHOD.",
-                index_method,
-            )
-        elif USE_HALFVEC:
-            index_method = 'hnsw'
-            log.info(
-                'VECTOR_LENGTH=%s exceeds 2000; using halfvec column type with hnsw index.',
-                VECTOR_LENGTH,
-            )
-        else:
-            index_method = 'ivfflat'
+        return vector_index_configuration()
 
-        if index_method == 'hnsw':
-            index_options = f'WITH (m = {PGVECTOR_HNSW_M}, ef_construction = {PGVECTOR_HNSW_EF_CONSTRUCTION})'
-        else:
-            index_options = f'WITH (lists = {PGVECTOR_IVFFLAT_LISTS})'
-
-        return index_method, index_options
-
-    def _ensure_vector_index(self, index_method: str, index_options: str) -> None:
-        index_name = 'idx_document_chunk_vector'
+    def _ensure_vector_index(
+        self,
+        index_method: str,
+        index_options: str,
+        table_name: str = 'document_chunk',
+        index_name: str = 'idx_document_chunk_vector',
+    ) -> None:
         existing_index_def = self.session.execute(
             text("""
                 SELECT indexdef
                 FROM pg_indexes
                 WHERE schemaname = current_schema()
-                  AND tablename = 'document_chunk'
+                  AND tablename = :table_name
                   AND indexname = :index_name
                 """),
-            {'index_name': index_name},
+            {'table_name': table_name, 'index_name': index_name},
         ).scalar()
 
         existing_method = self._extract_index_method(existing_index_def)
@@ -231,7 +346,7 @@ class PgvectorClient(VectorDBBase):
         if not existing_index_def:
             index_sql = (
                 f'CREATE INDEX IF NOT EXISTS {index_name} '
-                f'ON document_chunk USING {index_method} (vector {VECTOR_OPCLASS})'
+                f'ON {table_name} USING {index_method} (vector {VECTOR_OPCLASS})'
             )
             if index_options:
                 index_sql = f'{index_sql} {index_options}'
@@ -243,18 +358,292 @@ class PgvectorClient(VectorDBBase):
                 f' {index_options}' if index_options else '',
             )
 
-    def _ensure_text_search_index(self) -> None:
+    def _ensure_text_search_index(
+        self,
+        table_name: str = 'document_chunk',
+        index_name: str = 'idx_document_chunk_text_search',
+    ) -> None:
         if PGVECTOR_PGCRYPTO:
             return
 
         self.session.execute(
-            text("""
-                CREATE INDEX IF NOT EXISTS idx_document_chunk_text_search
-                ON document_chunk
-                USING GIN (to_tsvector('simple', coalesce(text, '')));
-                """)
+            text(
+                f'CREATE INDEX IF NOT EXISTS {index_name} '
+                f"ON {table_name} USING GIN (to_tsvector('simple', coalesce(text, '')));"
+            )
         )
-        log.info("Ensured text search index 'idx_document_chunk_text_search'.")
+        log.info("Ensured text search index '%s'.", index_name)
+
+    def check_partitioning_matches_schema(self) -> None:
+        """Refuse to start when PGVECTOR_PARTITIONING disagrees with the table.
+
+        `Base.metadata.create_all(checkfirst=True)` silently skips a table that
+        already exists, so without this check flipping the flag on an existing
+        install would leave every query referencing a `part_key` column that is
+        not there -- and flipping it off would leave rows stranded in partitions
+        nothing reads.
+        """
+        relkind = self.session.execute(
+            text(
+                'SELECT relkind FROM pg_class WHERE relname = :name AND relnamespace = current_schema()::regnamespace'
+            ),
+            {'name': DocumentChunk.__tablename__},
+        ).scalar()
+
+        if relkind is None:
+            # Fresh install: create_all builds whichever shape the flag asks for.
+            return
+
+        if PGVECTOR_PARTITIONING and relkind != 'p':
+            raise RuntimeError(
+                "PGVECTOR_PARTITIONING is enabled but 'document_chunk' is not a partitioned table. "
+                'Convert it with: python -m open_webui.retrieval.vector.dbs.pgvector_partition_migrate '
+                '--migrate  (or unset PGVECTOR_PARTITIONING).'
+            )
+        if not PGVECTOR_PARTITIONING and relkind == 'p':
+            raise RuntimeError(
+                "'document_chunk' is a partitioned table but PGVECTOR_PARTITIONING is not enabled. "
+                'Set PGVECTOR_PARTITIONING=true, or roll the migration back with: '
+                'python -m open_webui.retrieval.vector.dbs.pgvector_partition_migrate --rollback'
+            )
+
+    def _render_ddl(self, fmt: str, *args: str) -> str:
+        """Render DDL with PostgreSQL's own identifier and literal quoting.
+
+        DDL cannot take bound parameters and partition keys are application
+        strings, so the statement is built server-side through `format()` with
+        `%I`/`%L` rather than by escaping in Python.
+        """
+        placeholders = ', '.join(f':a{i}' for i in range(len(args)))
+        params = {f'a{i}': value for i, value in enumerate(args)}
+        return self.session.execute(
+            text(f'SELECT format(:fmt, {placeholders})'),
+            {'fmt': fmt, **params},
+        ).scalar()
+
+    def _ensure_buckets(self) -> None:
+        """Create the fixed bucket partitions. Runs once per process, at startup.
+
+        Buckets get a btree on `collection_name` and nothing else. They hold the
+        many small collections -- per file, per user memory, per web search, per
+        processed text -- which are looked up by exact collection name and then
+        distance-sorted over a handful of rows. A vector index over them would
+        only inflate the graph and lengthen every vacuum pass.
+
+        Workers starting together race here exactly as they do on dedicated
+        partitions: `IF NOT EXISTS` is not atomic, and worse, a worker that
+        read the partition list before another finished creating the buckets
+        would then find them in pg_class and misreport them as orphans of a
+        rolled-back migration. So the lock comes first and the state is read
+        under it. It is released when __init__ commits.
+        """
+        self.session.execute(
+            text('SELECT pg_advisory_xact_lock(:classid, :objid)'),
+            {'classid': PARTITION_ADVISORY_CLASSID, 'objid': BUCKETS_ADVISORY_OBJID},
+        )
+        existing = (
+            self.session.execute(
+                text(
+                    'SELECT c.relname FROM pg_inherits i '
+                    'JOIN pg_class c ON c.oid = i.inhrelid '
+                    'WHERE i.inhparent = to_regclass(:parent) AND c.relname LIKE :pattern'
+                ),
+                {'parent': DocumentChunk.__tablename__, 'pattern': f'{BUCKET_PREFIX}%'},
+            )
+            .scalars()
+            .all()
+        )
+
+        stale = sorted(
+            int(suffix)
+            for suffix in (name[len(BUCKET_PREFIX) :] for name in existing)
+            if suffix.isdigit() and int(suffix) >= PGVECTOR_PARTITION_BUCKETS
+        )
+        if stale:
+            raise RuntimeError(
+                f'document_chunk has bucket partitions {stale} beyond the configured '
+                f'PGVECTOR_PARTITION_BUCKETS={PGVECTOR_PARTITION_BUCKETS}. Lowering the bucket count '
+                'strands their rows: collections that hashed into them would silently stop being '
+                'found. Restore the previous value, or move the rows first.'
+            )
+
+        attached = set(existing)
+        for bucket in range(PGVECTOR_PARTITION_BUCKETS):
+            part_key = f'{BUCKET_PART_KEY_PREFIX}{bucket}'
+            partition = partition_name_for(part_key)
+
+            if partition not in attached:
+                # `CREATE TABLE IF NOT EXISTS ... PARTITION OF` matches on the
+                # name alone: if a table of that name exists but hangs off a
+                # different parent -- what a rolled-back migration leaves behind
+                # -- it would quietly do nothing and leave the bucket missing.
+                orphan = self.session.execute(
+                    text(
+                        'SELECT relkind FROM pg_class '
+                        'WHERE relname = :name AND relnamespace = current_schema()::regnamespace'
+                    ),
+                    {'name': partition},
+                ).scalar()
+                if orphan is not None:
+                    raise RuntimeError(
+                        f"Table '{partition}' already exists but is not a partition of "
+                        f"'{DocumentChunk.__tablename__}'. A rolled-back migration leaves the old "
+                        'partitioned table and its partitions in place; drop them before starting.'
+                    )
+
+            self.session.execute(
+                text(
+                    self._render_ddl(
+                        'CREATE TABLE IF NOT EXISTS %I PARTITION OF document_chunk FOR VALUES IN (%L)',
+                        partition,
+                        part_key,
+                    )
+                )
+            )
+            self.session.execute(
+                text(f'CREATE INDEX IF NOT EXISTS {partition}_collection_name_idx ON {partition} (collection_name)')
+            )
+            self._known_part_keys.add(part_key)
+
+        log.info('Ensured %s bucket partitions.', PGVECTOR_PARTITION_BUCKETS)
+
+    def _ensure_partition(self, collection_name: str) -> Optional[str]:
+        """Return the partition key for a collection, creating its partition if needed.
+
+        Only dedicated partitions are ever created here. Buckets exist from
+        startup, so the high-volume ingestion paths -- uploads, memories, web
+        search -- never run DDL.
+        """
+        if not PGVECTOR_PARTITIONING:
+            return None
+
+        part_key = part_key_for(collection_name)
+        if part_key in self._known_part_keys:
+            return part_key
+
+        if part_key.startswith(BUCKET_PART_KEY_PREFIX):
+            self._known_part_keys.add(part_key)
+            return part_key
+
+        with self._partition_lock:
+            if part_key not in self._known_part_keys:
+                self._create_dedicated_partition(part_key)
+                self._known_part_keys.add(part_key)
+        return part_key
+
+    def _create_dedicated_partition(self, part_key: str) -> None:
+        partition = partition_name_for(part_key)
+        lock_key = zlib.crc32(part_key.encode('utf-8')) - 2**31
+
+        for attempt in range(PARTITION_LOCK_RETRIES):
+            try:
+                # Creating a partition takes ACCESS EXCLUSIVE on the parent, so it
+                # runs in its own transaction and commits before the caller writes
+                # any rows. Holding that lock for the length of an insert would
+                # stall every concurrent reader.
+                self.session.rollback()
+                self.session.execute(text(f"SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT_MS}ms'"))
+                # `IF NOT EXISTS` is checked and acted on non-atomically: twelve
+                # workers racing for one partition still produce eleven
+                # duplicate_table errors without this lock.
+                self.session.execute(
+                    text('SELECT pg_advisory_xact_lock(:classid, :objid)'),
+                    {'classid': PARTITION_ADVISORY_CLASSID, 'objid': lock_key},
+                )
+                self.session.execute(
+                    text(
+                        self._render_ddl(
+                            'CREATE TABLE IF NOT EXISTS %I PARTITION OF document_chunk FOR VALUES IN (%L)',
+                            partition,
+                            part_key,
+                        )
+                    )
+                )
+                # Indexed while empty, so this is instant and safe to keep in the
+                # same transaction as the partition itself.
+                self._ensure_vector_index(
+                    self._index_method,
+                    self._index_options,
+                    table_name=partition,
+                    index_name=f'{partition}_vector_idx',
+                )
+                self._ensure_text_search_index(table_name=partition, index_name=f'{partition}_text_idx')
+                self.session.commit()
+                log.info("Created partition '%s' for collection '%s'.", partition, part_key)
+                return
+            except Exception as e:
+                self.session.rollback()
+                sqlstate = getattr(getattr(e, 'orig', None), 'pgcode', None)
+                if sqlstate == '42P07':
+                    # duplicate_table: another worker created it first, which is
+                    # exactly the outcome we wanted.
+                    log.debug("Partition '%s' was created concurrently.", partition)
+                    return
+                if sqlstate == '55P03' and attempt < PARTITION_LOCK_RETRIES - 1:
+                    # lock_not_available: a long-running reader holds the parent.
+                    # Back off rather than blocking ingestion indefinitely.
+                    log.warning(
+                        "Timed out locking 'document_chunk' to create partition '%s' (attempt %s/%s); retrying.",
+                        partition,
+                        attempt + 1,
+                        PARTITION_LOCK_RETRIES,
+                    )
+                    continue
+                log.exception('Error creating partition %s: %s', partition, e)
+                raise
+
+    @staticmethod
+    def _is_missing_partition(error: Exception) -> bool:
+        """Whether a write failed because its partition no longer exists.
+
+        Expected across workers: one can drop a knowledge base's partition --
+        reindexing does exactly that -- while another still has the key cached.
+
+        PostgreSQL reports this as check_violation (23514), the same code as a
+        real CHECK failure, but the two are distinguishable without reading the
+        message text, which is translated when the server runs with NLS:
+        routing failures name the *parent* table and carry no constraint, while
+        a CHECK failure names the partition and its constraint.
+        """
+        orig = getattr(error, 'orig', None)
+        if getattr(orig, 'pgcode', None) != '23514':
+            return False
+        diag = getattr(orig, 'diag', None)
+        if diag is None:
+            return False
+        return diag.constraint_name is None and diag.table_name == DocumentChunk.__tablename__
+
+    def _write_with_partition_retry(self, collection_name: str, write, items: List[VectorItem]) -> None:
+        """Run a write, re-creating the partition once if it vanished underneath us."""
+        if not PGVECTOR_PARTITIONING:
+            write(collection_name, items)
+            return
+
+        try:
+            write(collection_name, items)
+        except Exception as e:
+            if not self._is_missing_partition(e):
+                raise
+            self.session.rollback()
+            with self._partition_lock:
+                self._known_part_keys.discard(part_key_for(collection_name))
+            log.warning(
+                "Partition for collection '%s' was dropped by another worker; recreating it.",
+                collection_name,
+            )
+            write(collection_name, items)
+
+    def _collection_scope(self, collection_name: str) -> List[Any]:
+        """WHERE clauses restricting a query to one collection.
+
+        Adds the partition key so PostgreSQL can prune, which is what makes the
+        partitioning worth anything on the read path. Nothing about this reaches
+        `VectorDBBase`: the key is derived locally from the collection name.
+        """
+        clauses: List[Any] = [DocumentChunk.collection_name == collection_name]
+        if PGVECTOR_PARTITIONING:
+            clauses.append(DocumentChunk.part_key == part_key_for(collection_name))
+        return clauses
 
     def check_vector_length(self) -> None:
         """
@@ -290,6 +679,33 @@ class PgvectorClient(VectorDBBase):
         else:
             raise Exception("The 'vector' column does not exist in the 'document_chunk' table.")
 
+    def _pgcrypto_insert_sql(self, conflict_action: str) -> str:
+        """INSERT statement for the pgcrypto path.
+
+        The ON CONFLICT target has to name the whole primary key, and under
+        partitioning that key is composite: PostgreSQL requires the partition
+        key in every unique constraint.
+        """
+        if PGVECTOR_PARTITIONING:
+            columns = 'id, part_key, vector, collection_name, text, vmetadata'
+            values = ':id, :part_key, :vector, :collection_name'
+            conflict_target = '(id, part_key)'
+        else:
+            columns = 'id, vector, collection_name, text, vmetadata'
+            values = ':id, :vector, :collection_name'
+            conflict_target = '(id)'
+
+        return (
+            f'INSERT INTO document_chunk ({columns}) '
+            f'VALUES ({values}, pgp_sym_encrypt(:text, :key), pgp_sym_encrypt(:metadata_text, :key)) '
+            f'ON CONFLICT {conflict_target} {conflict_action}'
+        )
+
+    @staticmethod
+    def _chunk_fields(part_key: Optional[str]) -> Dict[str, Any]:
+        """Extra model/statement fields carried only when partitioning is on."""
+        return {'part_key': part_key} if PGVECTOR_PARTITIONING else {}
+
     def adjust_vector_length(self, vector: List[float]) -> List[float]:
         # Adjust vector to have length VECTOR_LENGTH
         current_length = len(vector)
@@ -301,9 +717,13 @@ class PgvectorClient(VectorDBBase):
             vector = vector[:VECTOR_LENGTH]
         return vector
 
-    def insert(self, collection_name: str, items: List[VectorItem]) -> None:
+    def _insert_items(self, collection_name: str, items: List[VectorItem]) -> None:
         try:
+            part_key = self._ensure_partition(collection_name)
+            extra = self._chunk_fields(part_key)
+
             if PGVECTOR_PGCRYPTO:
+                insert_sql = self._pgcrypto_insert_sql('DO NOTHING')
                 for item in items:
                     vector = self.adjust_vector_length(item['vector'])
                     # Use raw SQL for BYTEA/pgcrypto
@@ -312,16 +732,7 @@ class PgvectorClient(VectorDBBase):
                     json_metadata = sanitize_text_for_db(JSONCodec.dumps(item['metadata']))
                     item_text = sanitize_text_for_db(item['text'])
                     self.session.execute(
-                        text("""
-                            INSERT INTO document_chunk
-                            (id, vector, collection_name, text, vmetadata)
-                            VALUES (
-                                :id, :vector, :collection_name,
-                                pgp_sym_encrypt(:text, :key),
-                                pgp_sym_encrypt(:metadata_text, :key)
-                            )
-                            ON CONFLICT (id) DO NOTHING
-                        """),
+                        text(insert_sql),
                         {
                             'id': item['id'],
                             'vector': vector,
@@ -329,6 +740,7 @@ class PgvectorClient(VectorDBBase):
                             'text': item_text,
                             'metadata_text': json_metadata,
                             'key': PGVECTOR_PGCRYPTO_KEY,
+                            **extra,
                         },
                     )
                 self.session.commit()
@@ -344,6 +756,7 @@ class PgvectorClient(VectorDBBase):
                         collection_name=collection_name,
                         text=item['text'],
                         vmetadata=process_metadata(item['metadata']),
+                        **extra,
                     )
                     new_items.append(new_chunk)
                 self.session.bulk_save_objects(new_items)
@@ -354,29 +767,26 @@ class PgvectorClient(VectorDBBase):
             log.exception(f'Error during insert: {e}')
             raise
 
-    def upsert(self, collection_name: str, items: List[VectorItem]) -> None:
+    def insert(self, collection_name: str, items: List[VectorItem]) -> None:
+        self._write_with_partition_retry(collection_name, self._insert_items, items)
+
+    def _upsert_items(self, collection_name: str, items: List[VectorItem]) -> None:
         try:
+            part_key = self._ensure_partition(collection_name)
+            extra = self._chunk_fields(part_key)
+
             if PGVECTOR_PGCRYPTO:
+                upsert_sql = self._pgcrypto_insert_sql(
+                    'DO UPDATE SET vector = EXCLUDED.vector, collection_name = EXCLUDED.collection_name, '
+                    'text = EXCLUDED.text, vmetadata = EXCLUDED.vmetadata'
+                )
                 for item in items:
                     vector = self.adjust_vector_length(item['vector'])
                     # Sanitize to strip null bytes / surrogates that PostgreSQL cannot store
                     json_metadata = sanitize_text_for_db(JSONCodec.dumps(item['metadata']))
                     item_text = sanitize_text_for_db(item['text'])
                     self.session.execute(
-                        text("""
-                            INSERT INTO document_chunk
-                            (id, vector, collection_name, text, vmetadata)
-                            VALUES (
-                                :id, :vector, :collection_name,
-                                pgp_sym_encrypt(:text, :key),
-                                pgp_sym_encrypt(:metadata_text, :key)
-                            )
-                            ON CONFLICT (id) DO UPDATE SET
-                              vector = EXCLUDED.vector,
-                              collection_name = EXCLUDED.collection_name,
-                              text = EXCLUDED.text,
-                              vmetadata = EXCLUDED.vmetadata
-                        """),
+                        text(upsert_sql),
                         {
                             'id': item['id'],
                             'vector': vector,
@@ -384,6 +794,7 @@ class PgvectorClient(VectorDBBase):
                             'text': item_text,
                             'metadata_text': json_metadata,
                             'key': PGVECTOR_PGCRYPTO_KEY,
+                            **extra,
                         },
                     )
                 self.session.commit()
@@ -391,7 +802,12 @@ class PgvectorClient(VectorDBBase):
             else:
                 for item in items:
                     vector = self.adjust_vector_length(item['vector'])
-                    existing = self.session.query(DocumentChunk).filter(DocumentChunk.id == item['id']).first()
+                    # Scoped by part_key as well: looking up by id alone would
+                    # scan every partition.
+                    id_filter = [DocumentChunk.id == item['id']]
+                    if PGVECTOR_PARTITIONING:
+                        id_filter.append(DocumentChunk.part_key == part_key)
+                    existing = self.session.query(DocumentChunk).filter(*id_filter).first()
                     if existing:
                         existing.vector = vector
                         existing.text = item['text']
@@ -404,6 +820,7 @@ class PgvectorClient(VectorDBBase):
                             collection_name=collection_name,
                             text=item['text'],
                             vmetadata=process_metadata(item['metadata']),
+                            **extra,
                         )
                         self.session.add(new_chunk)
                 self.session.commit()
@@ -412,6 +829,9 @@ class PgvectorClient(VectorDBBase):
             self.session.rollback()
             log.exception(f'Error during upsert: {e}')
             raise
+
+    def upsert(self, collection_name: str, items: List[VectorItem]) -> None:
+        self._write_with_partition_retry(collection_name, self._upsert_items, items)
 
     def _apply_iterative_scan(self) -> None:
         """Let pgvector keep walking the index until enough rows survive the filter.
@@ -505,7 +925,7 @@ class PgvectorClient(VectorDBBase):
             result_fields.append((DocumentChunk.vector.cosine_distance(query_vectors.c.q_vector)).label('distance'))
 
             # Build the lateral subquery for each query vector
-            where_clauses = [DocumentChunk.collection_name == collection_name]
+            where_clauses = self._collection_scope(collection_name)
 
             # Apply metadata filter if provided
             if filter:
@@ -625,8 +1045,16 @@ class PgvectorClient(VectorDBBase):
 
             fts_results = []
             if bm25_weight > 0 and query and query.strip():
+                # The part_key predicate sits in the main query, not the CTE, so
+                # the planner still prunes to a single partition.
+                part_key_clause = ''
+                params = {'collection_name': collection_name, 'query': query, 'limit': limit}
+                if PGVECTOR_PARTITIONING:
+                    part_key_clause = 'AND document_chunk.part_key = :part_key'
+                    params['part_key'] = part_key_for(collection_name)
+
                 fts_rows = self.session.execute(
-                    text("""
+                    text(f"""
                         WITH fts_query AS (
                             SELECT plainto_tsquery('simple', :query) AS query
                         )
@@ -640,15 +1068,12 @@ class PgvectorClient(VectorDBBase):
                             ) AS rank
                         FROM document_chunk, fts_query
                         WHERE document_chunk.collection_name = :collection_name
+                          {part_key_clause}
                           AND to_tsvector('simple', coalesce(document_chunk.text, '')) @@ fts_query.query
                         ORDER BY rank DESC
                         LIMIT :limit
                     """),
-                    {
-                        'collection_name': collection_name,
-                        'query': query,
-                        'limit': limit,
-                    },
+                    params,
                 )
                 fts_results = [dict(row) for row in fts_rows.mappings().all()]
                 self.session.rollback()
@@ -669,7 +1094,7 @@ class PgvectorClient(VectorDBBase):
         try:
             if PGVECTOR_PGCRYPTO:
                 # Build where clause for vmetadata filter
-                where_clauses = [DocumentChunk.collection_name == collection_name]
+                where_clauses = self._collection_scope(collection_name)
                 for key, value in filter.items():
                     # decrypt then check key: JSON filter after decryption
                     where_clauses.append(
@@ -685,7 +1110,7 @@ class PgvectorClient(VectorDBBase):
                     stmt = stmt.limit(limit)
                 results = self.session.execute(stmt).all()
             else:
-                query = self.session.query(DocumentChunk).filter(DocumentChunk.collection_name == collection_name)
+                query = self.session.query(DocumentChunk).filter(*self._collection_scope(collection_name))
 
                 for key, value in filter.items():
                     query = query.filter(DocumentChunk.vmetadata[key].astext == str(value))
@@ -721,7 +1146,7 @@ class PgvectorClient(VectorDBBase):
                     DocumentChunk.id,
                     pgcrypto_decrypt(DocumentChunk.text, PGVECTOR_PGCRYPTO_KEY, Text).label('text'),
                     pgcrypto_decrypt(DocumentChunk.vmetadata, PGVECTOR_PGCRYPTO_KEY, JSONB).label('vmetadata'),
-                ).where(DocumentChunk.collection_name == collection_name)
+                ).where(*self._collection_scope(collection_name))
                 if limit is not None:
                     stmt = stmt.limit(limit)
                 results = self.session.execute(stmt).all()
@@ -729,7 +1154,7 @@ class PgvectorClient(VectorDBBase):
                 documents = [[row.text for row in results]]
                 metadatas = [[row.vmetadata for row in results]]
             else:
-                query = self.session.query(DocumentChunk).filter(DocumentChunk.collection_name == collection_name)
+                query = self.session.query(DocumentChunk).filter(*self._collection_scope(collection_name))
                 if limit is not None:
                     query = query.limit(limit)
 
@@ -758,7 +1183,7 @@ class PgvectorClient(VectorDBBase):
     ) -> None:
         try:
             if PGVECTOR_PGCRYPTO:
-                wheres = [DocumentChunk.collection_name == collection_name]
+                wheres = self._collection_scope(collection_name)
                 if ids:
                     wheres.append(DocumentChunk.id.in_(ids))
                 if filter:
@@ -771,7 +1196,7 @@ class PgvectorClient(VectorDBBase):
                 result = self.session.execute(stmt)
                 deleted = result.rowcount
             else:
-                query = self.session.query(DocumentChunk).filter(DocumentChunk.collection_name == collection_name)
+                query = self.session.query(DocumentChunk).filter(*self._collection_scope(collection_name))
                 if ids:
                     query = query.filter(DocumentChunk.id.in_(ids))
                 if filter:
@@ -787,6 +1212,22 @@ class PgvectorClient(VectorDBBase):
 
     def reset(self) -> None:
         try:
+            if PGVECTOR_PARTITIONING:
+                # Drop the per-collection partitions outright and truncate the
+                # buckets. A plain DELETE would leave one dead tuple per row for
+                # autovacuum to chew through, which is the cost this whole
+                # feature exists to avoid.
+                for partition in self._dedicated_partitions():
+                    self.session.execute(text(self._render_ddl('DROP TABLE IF EXISTS %I', partition)))
+                self.session.execute(text(f'TRUNCATE {DocumentChunk.__tablename__}'))
+                self.session.commit()
+                with self._partition_lock:
+                    self._known_part_keys = {
+                        f'{BUCKET_PART_KEY_PREFIX}{bucket}' for bucket in range(PGVECTOR_PARTITION_BUCKETS)
+                    }
+                log.info("Reset complete. Dropped all collection partitions of 'document_chunk'.")
+                return
+
             deleted = self.session.query(DocumentChunk).delete()
             self.session.commit()
             log.info("Reset complete. Deleted %s items from 'document_chunk' table.", deleted)
@@ -795,14 +1236,28 @@ class PgvectorClient(VectorDBBase):
             log.exception(f'Error during reset: {e}')
             raise
 
+    def _dedicated_partitions(self) -> List[str]:
+        """Names of the per-collection partitions, buckets excluded."""
+        return list(
+            self.session.execute(
+                text(
+                    'SELECT c.relname FROM pg_inherits i '
+                    'JOIN pg_class c ON c.oid = i.inhrelid '
+                    'WHERE i.inhparent = to_regclass(:parent) AND c.relname NOT LIKE :buckets'
+                ),
+                {'parent': DocumentChunk.__tablename__, 'buckets': f'{BUCKET_PREFIX}%'},
+            )
+            .scalars()
+            .all()
+        )
+
     def close(self) -> None:
         pass
 
     def has_collection(self, collection_name: str) -> bool:
         try:
             exists = (
-                self.session.query(DocumentChunk).filter(DocumentChunk.collection_name == collection_name).first()
-                is not None
+                self.session.query(DocumentChunk).filter(*self._collection_scope(collection_name)).first() is not None
             )
             self.session.rollback()  # read-only transaction
             return exists
@@ -812,5 +1267,31 @@ class PgvectorClient(VectorDBBase):
             return False
 
     def delete_collection(self, collection_name: str) -> None:
-        self.delete(collection_name)
+        if PGVECTOR_PARTITIONING and is_dedicated_collection(collection_name):
+            self._drop_dedicated_partition(collection_name)
+        else:
+            # Bucketed collections share a partition with many others, so only
+            # their own rows can go.
+            self.delete(collection_name)
         log.info("Collection '%s' deleted.", collection_name)
+
+    def _drop_dedicated_partition(self, collection_name: str) -> None:
+        """Drop a collection's partition instead of deleting its rows.
+
+        Instant, and it leaves nothing behind for autovacuum -- unlike a DELETE
+        over a whole knowledge base, which leaves a dead tuple per row and drags
+        every later vacuum pass through the vector index.
+        """
+        part_key = part_key_for(collection_name)
+        partition = partition_name_for(part_key)
+        try:
+            self.session.rollback()
+            self.session.execute(text(f"SET LOCAL lock_timeout = '{PARTITION_LOCK_TIMEOUT_MS}ms'"))
+            self.session.execute(text(self._render_ddl('DROP TABLE IF EXISTS %I', partition)))
+            self.session.commit()
+            with self._partition_lock:
+                self._known_part_keys.discard(part_key)
+        except Exception as e:
+            self.session.rollback()
+            log.exception('Error dropping partition %s: %s', partition, e)
+            raise

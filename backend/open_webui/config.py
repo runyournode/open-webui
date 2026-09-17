@@ -759,6 +759,41 @@ else:
     except Exception:
         PGVECTOR_IVFFLAT_LISTS = 100
 
+# Partition `document_chunk` by collection instead of keeping every collection in
+# one table under one global vector index. Off by default: enabling it on an
+# existing install requires migrating the table first.
+PGVECTOR_PARTITIONING = os.getenv('PGVECTOR_PARTITIONING', 'false').lower() == 'true'
+
+# Collections that do not get a partition of their own are hashed into this many
+# buckets. Changing the number after data has been written requires moving rows,
+# so treat it the same way as PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH.
+PGVECTOR_PARTITION_BUCKETS = os.getenv('PGVECTOR_PARTITION_BUCKETS', 16)
+
+if PGVECTOR_PARTITION_BUCKETS == '':
+    PGVECTOR_PARTITION_BUCKETS = 16
+else:
+    try:
+        PGVECTOR_PARTITION_BUCKETS = int(PGVECTOR_PARTITION_BUCKETS)
+    except Exception:
+        PGVECTOR_PARTITION_BUCKETS = 16
+
+if PGVECTOR_PARTITION_BUCKETS < 1:
+    PGVECTOR_PARTITION_BUCKETS = 16
+
+# Which collections earn a dedicated partition with their own vector and
+# full-text indexes. This is an allow-list on purpose: Open WebUI creates a
+# collection per uploaded file, per user memory, per web search and per
+# processed text/URL, and a partition for each of those would put DDL in the
+# ingestion path and leave the table with an unbounded number of partitions.
+# Anything not matched here is hashed into a bucket, so a collection shape added
+# upstream later is bucketed rather than exploding the partition count.
+# The default matches a bare UUID (a knowledge base id) and the `knowledge-bases`
+# system meta-collection.
+PGVECTOR_PARTITION_DEDICATED_PATTERN = os.getenv(
+    'PGVECTOR_PARTITION_DEDICATED_PATTERN',
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$|^knowledge-bases$',
+)
+
 # openGauss
 OPENGAUSS_DB_URL = os.getenv('OPENGAUSS_DB_URL', DATABASE_URL)
 
