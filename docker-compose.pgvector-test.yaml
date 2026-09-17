@@ -1,0 +1,99 @@
+# Throwaway PostgreSQL + pgvector used by the pgvector backend test suite and
+# the partitioning benchmark harness. Not part of a production deployment.
+#
+#   docker compose -f docker-compose.pgvector-test.yaml up -d
+#   PGVECTOR_TEST_DB_URL=postgresql://owui_test:owui_test@localhost:55433/owui_test pytest tests/
+#
+# The image matches the pgvector release Open WebUI is normally deployed
+# against. `max_locks_per_transaction` is deliberately left at the PostgreSQL
+# default so the suite measures lock pressure under partitioning the way an
+# untuned install would experience it.
+services:
+  pgvector-test:
+    image: pgvector/pgvector:0.8.6-pg18-trixie
+    environment:
+      POSTGRES_USER: owui_test
+      POSTGRES_PASSWORD: owui_test
+      POSTGRES_DB: owui_test
+      PGDATA: /var/lib/postgresql/18/docker
+    ports:
+      - '55433:5432'
+    # Parallel index builds put the work in shared memory, sized by
+    # maintenance_work_mem. Docker's 64MB default for /dev/shm makes CREATE
+    # INDEX fail with "could not resize shared memory segment", and a vector
+    # index over millions of rows needs far more than that.
+    shm_size: ${PG_SHM_SIZE:-16gb}
+    volumes:
+      - pgvector-test-data:/var/lib/postgresql
+    command:
+      - postgres
+      - '-c'
+      - 'shared_buffers=${PG_SHARED_BUFFERS:-2GB}'
+      - '-c'
+      # The single most important setting for this workload: a vector index
+      # build that exceeds it spills to disk and collapses in throughput. The
+      # benchmark varies it deliberately, so it is a variable, not a constant.
+      - 'maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-2GB}'
+      - '-c'
+      - 'work_mem=${PG_WORK_MEM:-64MB}'
+      - '-c'
+      - 'max_parallel_maintenance_workers=4'
+      - '-c'
+      - 'max_wal_size=8GB'
+      - '-c'
+      - 'checkpoint_timeout=30min'
+      # Required to read EXPLAIN (ANALYZE, BUFFERS) shared-hit counts reliably.
+      - '-c'
+      - 'track_io_timing=on'
+      # The benchmark needs to see which partitions were pruned.
+      - '-c'
+      - 'enable_partition_pruning=on'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U owui_test -d owui_test']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Runs the backend test suite against the database above, using the official
+  # image for the dependency set and mounting the working tree for the code.
+  #   docker compose -f docker-compose.pgvector-test.yaml run --rm tests
+  tests:
+    # The project's own pre-release image: the dependency set that ships with
+    # the `dev` branch this work targets. The working tree is mounted over it,
+    # so the code under test is this branch and only the environment comes from
+    # the image. Using a release image instead would test dev code against
+    # release dependencies -- they differ (dev drops langchain and pins
+    # langchain-core 1.4.8 where 0.11.3 carries 1.6.1).
+    image: ghcr.io/open-webui/open-webui:dev
+    profiles: ['test']
+    depends_on:
+      pgvector-test:
+        condition: service_healthy
+    environment:
+      PGVECTOR_TEST_DB_URL: postgresql://owui_test:owui_test@pgvector-test:5432/owui_test
+      DATABASE_URL: postgresql://owui_test:owui_test@pgvector-test:5432/owui_test
+      ENABLE_DB_MIGRATIONS: 'false'
+      VECTOR_DB: pgvector
+      WEBUI_SECRET_KEY: test
+      # The working tree is mounted read-only, so keep the writable state the
+      # app insists on creating at import time out of it.
+      DATA_DIR: /tmp/owui-test-data
+      STATIC_DIR: /tmp/owui-test-static
+      # Recorded alongside every measurement. `:dev` is rebuilt nightly, so the
+      # digest is what makes a result reproducible; export it before running.
+      OWUI_TEST_IMAGE: ghcr.io/open-webui/open-webui:dev
+      OWUI_TEST_IMAGE_DIGEST: ${OWUI_TEST_IMAGE_DIGEST:-}
+      # This is the reference environment: a dependency that drifts from the
+      # branch's pins fails the run here, where elsewhere it only warns.
+      OWUI_TEST_STRICT_ENV: '1'
+    volumes:
+      - ./backend:/app/backend:ro
+      - ./tests:/app/tests:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    working_dir: /app
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - 'mkdir -p /tmp/owui-test-static && cp -r /app/backend/open_webui/static/. /tmp/owui-test-static/ 2>/dev/null; pip install --quiet pytest pytest-asyncio && exec pytest -q ${PYTEST_ARGS:-tests}'
+
+volumes:
+  pgvector-test-data:

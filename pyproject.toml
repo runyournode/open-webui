@@ -209,6 +209,15 @@ dev = [
 line-length = 120
 skip-string-normalization = true
 
+[tool.pytest.ini_options]
+# Tests live outside `backend/` on purpose: the wheel is built with
+# `sources = ["backend"]`, so anything under it ships to every installation.
+testpaths = ["tests"]
+pythonpath = ["backend", "."]
+markers = [
+  "pgvector: needs a PostgreSQL server with the vector extension (see docker-compose.pgvector-test.yaml)",
+]
+
 [tool.ruff]
 line-length = 120
 
@@ -234,3 +243,7 @@ flake8-import-conventions.aliases = { datetime = "dt" }
 flake8-quotes.inline-quotes = "single"
 mccabe.max-complexity = 10
 pydocstyle.convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Prose used as test data; wrapping it would only make it harder to read.
+"tests/vector/needle_corpus.py" = ["E501"]
