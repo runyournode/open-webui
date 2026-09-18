@@ -1,7 +1,10 @@
 # pgvector: per-collection search returns a fraction of its results, and most of the index is unused
 
 *Draft for a GitHub Discussion (Ideas). Not a pull request — following the
-contributing guidelines, this is the proposal stage.*
+contributing guidelines, this is the proposal stage. Everything below has an
+implementation behind it, tested end to end on a branch against `dev` (links
+at the end); we are glad to open it as pull requests if a maintainer asks, or
+to rework it first on your feedback.*
 
 Related, but a different bottleneck: #17998 and #20737 are about the Python BM25
 fallback fetching whole collections. This is about the vector index itself, so
@@ -247,7 +250,14 @@ served by a bitmap scan and an exact sort. Their median SQL time goes from
    routing is the right shape — and whether you would rather implement it
    yourselves.
 
-There is a branch against `dev` if it is useful as a reference: the connection
-leak fix on its own, then the iterative scan change, then partitioning, then the
-migration script, then a test suite and benchmark harness. No PR is open, and
-none will be unless a maintainer asks for one.
+The implementation is on a fork, as five commits against `dev` — the connection
+leak fix on its own, then the iterative scan change, then partitioning, then
+the migration script, then a test suite and benchmark harness — with the
+measurements alongside:
+
+- code: https://github.com/runyournode/open-webui/tree/feat/pgvector-partitioning-v3
+- diff against `dev`: https://github.com/open-webui/open-webui/compare/dev...runyournode:open-webui:feat/pgvector-partitioning-v3
+- measurements and write-ups (methodology, the two standalone notes, raw logs): https://github.com/runyournode/open-webui/tree/evidence/pgvector-partitioning/docs/pgvector-partitioning
+- every measurement in tables: https://github.com/runyournode/open-webui/blob/evidence/pgvector-partitioning/docs/pgvector-partitioning/results/SUMMARY.md
+
+No PR is open, and none will be unless a maintainer asks for one.
