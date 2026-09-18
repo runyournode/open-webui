@@ -16,9 +16,11 @@ recall@10 close to 1: the ten nearest chunks of the collection are returned.
 
 ## Actual Behavior
 
-HNSW `m=16`, 200 queries per point, recall@10 against exact kNN: `ef_search` 10 → 0.143, 40 (default) → **0.269**, 100 → 0.459, 400 → 0.937. Worst decile at the default: 0.00. At 3M rows the default gives 0.284. IVFFlat at its default `probes=1` gives 0.835 (`lists=1000`); at any higher `probes` the planner abandons the index for an exact sort, correct but at 46 ms (1M) and 135 ms (3M) per search.
+HNSW `m=16`, 200 queries per point, recall@10 against an exact kNN over the same collection: 0.143 at `ef_search=10`, **0.269 at the default 40**, 0.459 at 100, 0.937 at 400 (SQL time 3.0 → 4.7 → 7.0 → 9.3 ms). Worst decile at the default: 0.00 — one query in ten gets nothing relevant. At 3M rows the default gives 0.284. IVFFlat, the default method, gives 0.835 at its default `probes=1`; at any higher `probes` the planner drops the index for an exact sort, which is correct but costs 46 ms (1M) and 135 ms (3M) per search.
 
-`hnsw.iterative_scan` / `ivfflat.iterative_scan`, which make pgvector keep walking until enough rows pass the filter, are never set by the codebase. Setting `hnsw.iterative_scan = relaxed_order` takes the default point from 0.269 to 0.914, with the SQL time of a search going from 4.7 ms to 8.7 ms.
+Why: an HNSW scan collects `ef_search` candidates — the query's nearest neighbours across the *whole* table — and the `collection_name` predicate is applied to those candidates afterwards. A collection holding 1.5 % of the rows owns about 1.5 % of them, so most of the requested ten are simply never examined. Raising `ef_search` widens the candidate list and helps slowly, at the cost shown above; it does not change the mechanism.
+
+pgvector 0.8 added the remedy for exactly this case: iterative scans (`hnsw.iterative_scan`, values `off | relaxed_order | strict_order`; `ivfflat.iterative_scan`, values `off | relaxed_order`; both default `off`, bounded by `hnsw.max_scan_tuples` and `ivfflat.max_probes`), which make the scan keep going after filtering until it has the requested number of rows. Open WebUI never sets them. With `hnsw.iterative_scan = relaxed_order`, the default point goes from 0.269 to 0.914 and the SQL time of a search from 4.7 ms to 8.7 ms.
 
 ## Additional Information
 
