@@ -11,6 +11,7 @@ in tables, A → B → C side by side, generated from the logs by
 | File | What it is |
 |---|---|
 | `discussion.md` | the proposal, as posted |
+| `issues/issue-1.md`, `issue-2.md`, `issue-3.md` | the three standalone issues: the recall loss, the connection leak on empty results, the IVFFlat index built before any rows exist |
 | `methodology.md` | what was measured, how, and what the numbers do not cover |
 | `connection-leak.md` | the empty-result connection leak, standalone |
 | `ivfflat-empty-index.md` | the IVFFlat index built before any rows exist, standalone |
