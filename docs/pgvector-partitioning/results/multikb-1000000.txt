@@ -1,0 +1,593 @@
+
+######## 2026-09-17T23:46:35+02:00 [multikb-1000000] reprise multi-bases, 1000000 lignes, profil généreux, build_mem=6GB
+NOTICE:  database "multikb_1000000" does not exist, skipping
+
+######## 2026-09-17T23:46:36+02:00 [multikb-1000000] generate + verify
+Generating 1000000 rows of 1024 dimensions
+  kb         300000 rows in      20 collections
+  file       560000 rows in   28000 collections
+  memory      70000 rows in   14000 collections
+  search      70000 rows in    7000 collections
+  each knowledge base is 1.500% of the table
+    file: 500000/560000 rows (21s)
+    file: 560000/560000 rows (24s)
+Generated in 45s
+Dataset verified against the plan:
+  kb         300000 rows in      20 collections
+  file       560000 rows in   28000 collections
+  memory      70000 rows in   14000 collections
+  search      70000 rows in    7000 collections
+  total     1000000 rows, all ids distinct
+
+######## 2026-09-17T23:47:27+02:00 [multikb-1000000] embed
+Embedding 199 passages and 48 questions through text-embedding-harrier-oss-v1-0.6b
+    embedded 16/199
+    embedded 32/199
+    embedded 48/199
+    embedded 64/199
+    embedded 80/199
+    embedded 96/199
+    embedded 112/199
+    embedded 128/199
+    embedded 144/199
+    embedded 160/199
+    embedded 176/199
+    embedded 192/199
+    embedded 199/199
+    embedded 16/48
+    embedded 32/48
+    embedded 48/48
+{
+  "collection": "00000000-0000-4000-8000-000000000000",
+  "passages": 199,
+  "questions": 48,
+  "model": "text-embedding-harrier-oss-v1-0.6b",
+  "dim": 1024,
+  "hard_distractors": {
+    "rows": 14801,
+    "noise_levels": [
+      0.03,
+      0.05,
+      0.08,
+      0.12,
+      0.2,
+      0.3
+    ]
+  }
+}
+
+######## 2026-09-17T23:47:35+02:00 [multikb-1000000] index global hnsw (m=16, efc=64)
+NOTICE:  index "idx_document_chunk_vector" does not exist, skipping
+Building hnsw index WITH (m = 16, ef_construction = 64) on the unpartitioned table
+  vector index built in 204s
+  all indexes built in 207s
+
+######## 2026-09-17T23:51:04+02:00 [multikb-1000000] multikb A hnsw m=16,efc=64 effort=400
+{
+  "config": "A",
+  "index_method": "hnsw",
+  "search_effort": 400,
+  "effort_in_force": "hnsw.ef_search=400",
+  "k": 10,
+  "note": "query_collection issues one search per collection and merges afterwards; it does not aggregate",
+  "by_collection_count": [
+    {
+      "collections": 1,
+      "searches_issued": 1,
+      "rows_requested": 10,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.99,
+      "latency_ms_median": 18.97,
+      "latency_ms_p95": 20.75
+    },
+    {
+      "collections": 3,
+      "searches_issued": 3,
+      "rows_requested": 30,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.99,
+      "latency_ms_median": 41.16,
+      "latency_ms_p95": 51.49
+    },
+    {
+      "collections": 10,
+      "searches_issued": 10,
+      "rows_requested": 100,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.99,
+      "latency_ms_median": 134.42,
+      "latency_ms_p95": 419.18
+    }
+  ],
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-17T23:51:27+02:00 [multikb-1000000] multikb B hnsw m=16,efc=64 effort=400
+{
+  "config": "B",
+  "index_method": "hnsw",
+  "search_effort": 400,
+  "effort_in_force": "hnsw.ef_search=400",
+  "k": 10,
+  "note": "query_collection issues one search per collection and merges afterwards; it does not aggregate",
+  "by_collection_count": [
+    {
+      "collections": 1,
+      "searches_issued": 1,
+      "rows_requested": 10,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.99,
+      "latency_ms_median": 18.48,
+      "latency_ms_p95": 19.41
+    },
+    {
+      "collections": 3,
+      "searches_issued": 3,
+      "rows_requested": 30,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.99,
+      "latency_ms_median": 77.69,
+      "latency_ms_p95": 80.78
+    },
+    {
+      "collections": 10,
+      "searches_issued": 10,
+      "rows_requested": 100,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.99,
+      "latency_ms_median": 209.4,
+      "latency_ms_p95": 459.89
+    }
+  ],
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-17T23:51:52+02:00 [multikb-1000000] index global hnsw (m=32, efc=128)
+Building hnsw index WITH (m = 32, ef_construction = 128) on the unpartitioned table
+  vector index built in 414s
+  all indexes built in 414s
+
+######## 2026-09-17T23:58:49+02:00 [multikb-1000000] multikb A hnsw m=32,efc=128 effort=400
+{
+  "config": "A",
+  "index_method": "hnsw",
+  "search_effort": 400,
+  "effort_in_force": "hnsw.ef_search=400",
+  "k": 10,
+  "note": "query_collection issues one search per collection and merges afterwards; it does not aggregate",
+  "by_collection_count": [
+    {
+      "collections": 1,
+      "searches_issued": 1,
+      "rows_requested": 10,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 22.47,
+      "latency_ms_p95": 24.03
+    },
+    {
+      "collections": 3,
+      "searches_issued": 3,
+      "rows_requested": 30,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 42.49,
+      "latency_ms_p95": 309.2
+    },
+    {
+      "collections": 10,
+      "searches_issued": 10,
+      "rows_requested": 100,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 135.02,
+      "latency_ms_p95": 400.55
+    }
+  ],
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-17T23:59:12+02:00 [multikb-1000000] multikb B hnsw m=32,efc=128 effort=400
+{
+  "config": "B",
+  "index_method": "hnsw",
+  "search_effort": 400,
+  "effort_in_force": "hnsw.ef_search=400",
+  "k": 10,
+  "note": "query_collection issues one search per collection and merges afterwards; it does not aggregate",
+  "by_collection_count": [
+    {
+      "collections": 1,
+      "searches_issued": 1,
+      "rows_requested": 10,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 20.75,
+      "latency_ms_p95": 22.5
+    },
+    {
+      "collections": 3,
+      "searches_issued": 3,
+      "rows_requested": 30,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 88.77,
+      "latency_ms_p95": 343.15
+    },
+    {
+      "collections": 10,
+      "searches_issued": 10,
+      "rows_requested": 100,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 219.04,
+      "latency_ms_p95": 477.13
+    }
+  ],
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-17T23:59:37+02:00 [multikb-1000000] MIGRATE
+Migration plan:
+  collections           : 49020
+  rows                  : 1000000
+  dedicated partitions  : 20 (one per knowledge base, each with its own indexes)
+  buckets               : 32 (btree on collection_name only)
+  total partitions      : 52
+  rows into buckets     : 700000 across 49000 collections
+  rows into partitions  : 300000
+Creating 20 dedicated partitions
+Mapping 49020 collections to partition keys
+  copied 50000/1000000 rows (21109/s)
+  copied 100000/1000000 rows (23203/s)
+  copied 150000/1000000 rows (23867/s)
+  copied 200000/1000000 rows (23931/s)
+  copied 250000/1000000 rows (24336/s)
+  copied 300000/1000000 rows (24439/s)
+  copied 350000/1000000 rows (23848/s)
+  copied 400000/1000000 rows (23570/s)
+  copied 450000/1000000 rows (22926/s)
+  copied 500000/1000000 rows (22816/s)
+  copied 550000/1000000 rows (22710/s)
+  copied 600000/1000000 rows (22408/s)
+  copied 650000/1000000 rows (21929/s)
+  copied 700000/1000000 rows (21814/s)
+  copied 750000/1000000 rows (21829/s)
+  copied 800000/1000000 rows (21844/s)
+  copied 850000/1000000 rows (21914/s)
+  copied 900000/1000000 rows (22007/s)
+  copied 950000/1000000 rows (21962/s)
+  copied 1000000/1000000 rows (21905/s)
+INFO Using vector index method 'hnsw' from PGVECTOR_INDEX_METHOD.
+INFO Indexed partition document_chunk_p_00000008_0000_40_a8a4b20da70c
+INFO Indexed partition document_chunk_p_00000001_0000_40_a5d51dadc635
+INFO Indexed partition document_chunk_p_0000000d_0000_40_9be7cd22e7d7
+INFO Indexed partition document_chunk_p_00000013_0000_40_cabc1083d190
+INFO Indexed partition document_chunk_p_0000000e_0000_40_9d6d972f2dba
+INFO Indexed partition document_chunk_p_0000000a_0000_40_e218a0d981c3
+INFO Indexed partition document_chunk_p_00000007_0000_40_bb2f61a362da
+INFO Indexed partition document_chunk_p_00000011_0000_40_e5b2f947247c
+INFO Indexed partition document_chunk_p_00000004_0000_40_4e8564b65871
+INFO Indexed partition document_chunk_p_00000009_0000_40_24208d16754d
+INFO Indexed partition document_chunk_p_00000000_0000_40_37965e58c97e
+INFO Indexed partition document_chunk_p_00000012_0000_40_47cb77f7adea
+INFO Indexed partition document_chunk_p_00000010_0000_40_0d0db122f7ba
+INFO Indexed partition document_chunk_p_00000003_0000_40_515758a1795e
+INFO Indexed partition document_chunk_p_0000000c_0000_40_93cccef3024f
+INFO Indexed partition document_chunk_p_0000000b_0000_40_414b74c7b501
+INFO Indexed partition document_chunk_p_0000000f_0000_40_603c73cfc4bb
+INFO Indexed partition document_chunk_p_00000005_0000_40_394b9b80421e
+INFO Indexed partition document_chunk_p_00000006_0000_40_0407781544d9
+INFO Indexed partition document_chunk_p_00000002_0000_40_4a4a5ac0856d
+INFO Swapped in the partitioned table. The original is kept as 'document_chunk_pre_partition'.
+Migrated 1000000 rows in 215.8s.
+Set PGVECTOR_PARTITIONING=true and restart. The previous table is kept as 'document_chunk_pre_partition';
+drop it once you are satisfied, or use --rollback to go back.
+
+######## 2026-09-18T00:03:19+02:00 [multikb-1000000] index de partitions hnsw (m=16, efc=64)
+{
+  "partitions_indexed": 20,
+  "index_method": "hnsw",
+  "build_seconds": 164.0,
+  "lists": null,
+  "lists_used": null,
+  "m": 16,
+  "ef_construction": 64
+}
+
+######## 2026-09-18T00:06:05+02:00 [multikb-1000000] multikb C hnsw m=16,efc=64 effort=400
+{
+  "config": "C",
+  "index_method": "hnsw",
+  "search_effort": 400,
+  "effort_in_force": "hnsw.ef_search=400",
+  "k": 10,
+  "note": "query_collection issues one search per collection and merges afterwards; it does not aggregate",
+  "by_collection_count": [
+    {
+      "collections": 1,
+      "searches_issued": 1,
+      "rows_requested": 10,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.89,
+      "latency_ms_median": 19.13,
+      "latency_ms_p95": 20.98
+    },
+    {
+      "collections": 3,
+      "searches_issued": 3,
+      "rows_requested": 30,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.89,
+      "latency_ms_median": 47.38,
+      "latency_ms_p95": 48.94
+    },
+    {
+      "collections": 10,
+      "searches_issued": 10,
+      "rows_requested": 100,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 0.89,
+      "latency_ms_median": 156.2,
+      "latency_ms_p95": 413.0
+    }
+  ],
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T00:06:31+02:00 [multikb-1000000] index de partitions hnsw (m=32, efc=128)
+{
+  "partitions_indexed": 20,
+  "index_method": "hnsw",
+  "build_seconds": 539.8,
+  "lists": null,
+  "lists_used": null,
+  "m": 32,
+  "ef_construction": 128
+}
+
+######## 2026-09-18T00:15:33+02:00 [multikb-1000000] multikb C hnsw m=32,efc=128 effort=400
+{
+  "config": "C",
+  "index_method": "hnsw",
+  "search_effort": 400,
+  "effort_in_force": "hnsw.ef_search=400",
+  "k": 10,
+  "note": "query_collection issues one search per collection and merges afterwards; it does not aggregate",
+  "by_collection_count": [
+    {
+      "collections": 1,
+      "searches_issued": 1,
+      "rows_requested": 10,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 20.63,
+      "latency_ms_p95": 24.22
+    },
+    {
+      "collections": 3,
+      "searches_issued": 3,
+      "rows_requested": 30,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 51.75,
+      "latency_ms_p95": 53.18
+    },
+    {
+      "collections": 10,
+      "searches_issued": 10,
+      "rows_requested": 100,
+      "rounds": 10,
+      "warmed_up": true,
+      "recall_at_k": 1.0,
+      "latency_ms_median": 167.65,
+      "latency_ms_p95": 477.66
+    }
+  ],
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T00:15:59+02:00 [multikb-1000000] reprise terminée

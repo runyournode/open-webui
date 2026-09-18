@@ -1,0 +1,744 @@
+
+######## 2026-09-18T09:11:21+02:00 [d5] début
+NOTICE:  database "bench_200000_d5" does not exist, skipping
+
+######## 2026-09-18T09:11:21+02:00 [d5] generate
+Generating 200000 rows of 1024 dimensions
+  kb          60000 rows in      20 collections
+  file       112000 rows in    5600 collections
+  memory      14000 rows in    2800 collections
+  search      14000 rows in    1400 collections
+  each knowledge base is 1.500% of the table
+Generated in 10s
+Dataset verified against the plan:
+  kb          60000 rows in      20 collections
+  file       112000 rows in    5600 collections
+  memory      14000 rows in    2800 collections
+  search      14000 rows in    1400 collections
+  total      200000 rows, all ids distinct
+
+######## 2026-09-18T09:11:33+02:00 [d5] embed
+Embedding 199 passages and 48 questions through text-embedding-harrier-oss-v1-0.6b
+    embedded 16/199
+    embedded 32/199
+    embedded 48/199
+    embedded 64/199
+    embedded 80/199
+    embedded 96/199
+    embedded 112/199
+    embedded 128/199
+    embedded 144/199
+    embedded 160/199
+    embedded 176/199
+    embedded 192/199
+    embedded 199/199
+    embedded 16/48
+    embedded 32/48
+    embedded 48/48
+{
+  "collection": "00000000-0000-4000-8000-000000000000",
+  "passages": 199,
+  "questions": 48,
+  "model": "text-embedding-harrier-oss-v1-0.6b",
+  "dim": 1024,
+  "hard_distractors": {
+    "rows": 2801,
+    "noise_levels": [
+      0.03,
+      0.05,
+      0.08,
+      0.12,
+      0.2,
+      0.3
+    ]
+  }
+}
+
+######## 2026-09-18T09:11:40+02:00 [d5] index hnsw m=16
+Building hnsw index WITH (m = 16, ef_construction = 64) on the unpartitioned table
+  vector index built in 30s
+  all indexes built in 31s
+
+######## 2026-09-18T09:12:13+02:00 [d5] A kb ef=40 mode=self
+Measuring config A (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "A",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": false,
+  "query_mode": "self",
+  "recall_at_k": 0.294,
+  "recall_p10": 0.1,
+  "latency_ms_median": 13.27,
+  "latency_ms_p95": 16.74,
+  "sql_ms_median": 3.52,
+  "sql_ms_p95": 4.41,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "idx_document_chunk_vector"
+    ]
+  },
+  "vector_index_mb": 878.5,
+  "text_index_mb": 22.0,
+  "other_index_mb": 17.1,
+  "total_index_mb": 917.6,
+  "heap_mb": 1117.5,
+  "index_count": 4,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:12:26+02:00 [d5] B kb ef=40 mode=self
+Measuring config B (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "B",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": true,
+  "query_mode": "self",
+  "recall_at_k": 0.9345,
+  "recall_p10": 0.8,
+  "latency_ms_median": 17.22,
+  "latency_ms_p95": 23.94,
+  "sql_ms_median": 6.83,
+  "sql_ms_p95": 10.55,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "idx_document_chunk_vector"
+    ]
+  },
+  "vector_index_mb": 878.5,
+  "text_index_mb": 22.0,
+  "other_index_mb": 17.1,
+  "total_index_mb": 917.6,
+  "heap_mb": 1117.5,
+  "index_count": 4,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:12:41+02:00 [d5] A kb ef=40 mode=perturbed
+Measuring config A (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "A",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": false,
+  "query_mode": "perturbed",
+  "recall_at_k": 0.294,
+  "recall_p10": 0.1,
+  "latency_ms_median": 13.49,
+  "latency_ms_p95": 18.07,
+  "sql_ms_median": 3.74,
+  "sql_ms_p95": 4.86,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "idx_document_chunk_vector"
+    ]
+  },
+  "vector_index_mb": 878.5,
+  "text_index_mb": 22.0,
+  "other_index_mb": 17.1,
+  "total_index_mb": 917.6,
+  "heap_mb": 1117.5,
+  "index_count": 4,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:12:54+02:00 [d5] B kb ef=40 mode=perturbed
+Measuring config B (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "B",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": true,
+  "query_mode": "perturbed",
+  "recall_at_k": 0.929,
+  "recall_p10": 0.8,
+  "latency_ms_median": 17.31,
+  "latency_ms_p95": 24.08,
+  "sql_ms_median": 6.89,
+  "sql_ms_p95": 11.49,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "idx_document_chunk_vector"
+    ]
+  },
+  "vector_index_mb": 878.5,
+  "text_index_mb": 22.0,
+  "other_index_mb": 17.1,
+  "total_index_mb": 917.6,
+  "heap_mb": 1117.5,
+  "index_count": 4,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:13:09+02:00 [d5] A kb ef=40 mode=exclude-self
+Measuring config A (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "A",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": false,
+  "query_mode": "exclude-self",
+  "recall_at_k": 0.2055,
+  "recall_p10": 0.0,
+  "latency_ms_median": 13.28,
+  "latency_ms_p95": 17.08,
+  "sql_ms_median": 3.4,
+  "sql_ms_p95": 4.3,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "idx_document_chunk_vector"
+    ]
+  },
+  "vector_index_mb": 878.5,
+  "text_index_mb": 22.0,
+  "other_index_mb": 17.1,
+  "total_index_mb": 917.6,
+  "heap_mb": 1117.5,
+  "index_count": 4,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:13:22+02:00 [d5] B kb ef=40 mode=exclude-self
+Measuring config B (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "B",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": true,
+  "query_mode": "exclude-self",
+  "recall_at_k": 0.9145,
+  "recall_p10": 0.8,
+  "latency_ms_median": 17.31,
+  "latency_ms_p95": 22.86,
+  "sql_ms_median": 7.19,
+  "sql_ms_p95": 10.88,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "idx_document_chunk_vector"
+    ]
+  },
+  "vector_index_mb": 878.5,
+  "text_index_mb": 22.0,
+  "other_index_mb": 17.1,
+  "total_index_mb": 917.6,
+  "heap_mb": 1117.5,
+  "index_count": 4,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:13:36+02:00 [d5] migrate
+Migration plan:
+  collections           : 9820
+  rows                  : 200000
+  dedicated partitions  : 20 (one per knowledge base, each with its own indexes)
+  buckets               : 32 (btree on collection_name only)
+  total partitions      : 52
+  rows into buckets     : 140000 across 9800 collections
+  rows into partitions  : 60000
+Creating 20 dedicated partitions
+Mapping 9820 collections to partition keys
+  copied 50000/200000 rows (22285/s)
+  copied 100000/200000 rows (18791/s)
+  copied 150000/200000 rows (19299/s)
+  copied 200000/200000 rows (19375/s)
+INFO Using vector index method 'hnsw' from PGVECTOR_INDEX_METHOD.
+INFO Indexed partition document_chunk_p_00000008_0000_40_a8a4b20da70c
+INFO Indexed partition document_chunk_p_00000009_0000_40_24208d16754d
+INFO Indexed partition document_chunk_p_0000000a_0000_40_e218a0d981c3
+INFO Indexed partition document_chunk_p_0000000b_0000_40_414b74c7b501
+INFO Indexed partition document_chunk_p_0000000c_0000_40_93cccef3024f
+INFO Indexed partition document_chunk_p_0000000d_0000_40_9be7cd22e7d7
+INFO Indexed partition document_chunk_p_0000000e_0000_40_9d6d972f2dba
+INFO Indexed partition document_chunk_p_0000000f_0000_40_603c73cfc4bb
+INFO Indexed partition document_chunk_p_00000010_0000_40_0d0db122f7ba
+INFO Indexed partition document_chunk_p_00000011_0000_40_e5b2f947247c
+INFO Indexed partition document_chunk_p_00000012_0000_40_47cb77f7adea
+INFO Indexed partition document_chunk_p_00000013_0000_40_cabc1083d190
+INFO Indexed partition document_chunk_p_00000001_0000_40_a5d51dadc635
+INFO Indexed partition document_chunk_p_00000002_0000_40_4a4a5ac0856d
+INFO Indexed partition document_chunk_p_00000000_0000_40_37965e58c97e
+INFO Indexed partition document_chunk_p_00000003_0000_40_515758a1795e
+INFO Indexed partition document_chunk_p_00000004_0000_40_4e8564b65871
+INFO Indexed partition document_chunk_p_00000005_0000_40_394b9b80421e
+INFO Indexed partition document_chunk_p_00000006_0000_40_0407781544d9
+INFO Indexed partition document_chunk_p_00000007_0000_40_bb2f61a362da
+INFO Swapped in the partitioned table. The original is kept as 'document_chunk_pre_partition'.
+Migrated 200000 rows in 35.9s.
+Set PGVECTOR_PARTITIONING=true and restart. The previous table is kept as 'document_chunk_pre_partition';
+drop it once you are satisfied, or use --rollback to go back.
+
+######## 2026-09-18T09:14:17+02:00 [d5] partindex hnsw m=16
+{
+  "partitions_indexed": 20,
+  "index_method": "hnsw",
+  "build_seconds": 24.3,
+  "lists": null,
+  "lists_used": null,
+  "m": 16,
+  "ef_construction": 64
+}
+
+######## 2026-09-18T09:14:43+02:00 [d5] C kb ef=40 mode=self
+Measuring config C (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "C",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": false,
+  "query_mode": "self",
+  "recall_at_k": 0.996,
+  "recall_p10": 1.0,
+  "latency_ms_median": 13.42,
+  "latency_ms_p95": 16.31,
+  "sql_ms_median": 3.44,
+  "sql_ms_p95": 4.17,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "document_chunk_p_00000000_0000_40_37965e58c97e_vector_idx"
+    ]
+  },
+  "vector_index_mb": 468.6,
+  "text_index_mb": 10.8,
+  "other_index_mb": 18.6,
+  "total_index_mb": 498.1,
+  "heap_mb": 1108.5,
+  "index_count": 125,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:14:56+02:00 [d5] C kb ef=40 mode=perturbed
+Measuring config C (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "C",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": false,
+  "query_mode": "perturbed",
+  "recall_at_k": 0.9955,
+  "recall_p10": 1.0,
+  "latency_ms_median": 12.78,
+  "latency_ms_p95": 13.99,
+  "sql_ms_median": 3.43,
+  "sql_ms_p95": 3.82,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "document_chunk_p_00000000_0000_40_37965e58c97e_vector_idx"
+    ]
+  },
+  "vector_index_mb": 468.6,
+  "text_index_mb": 10.8,
+  "other_index_mb": 18.6,
+  "total_index_mb": 498.1,
+  "heap_mb": 1108.5,
+  "index_count": 125,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:15:09+02:00 [d5] C kb ef=40 mode=exclude-self
+Measuring config C (hnsw, effort 40) over 10 kb collections, 20 queries each
+{
+  "config": "C",
+  "target": "kb",
+  "collections": 10,
+  "queries": 200,
+  "warmed_up": true,
+  "search_effort": 40,
+  "through_client": true,
+  "iterative_scan": false,
+  "query_mode": "exclude-self",
+  "recall_at_k": 0.994,
+  "recall_p10": 1.0,
+  "latency_ms_median": 12.34,
+  "latency_ms_p95": 14.32,
+  "sql_ms_median": 3.21,
+  "sql_ms_p95": 3.64,
+  "plan": {
+    "nodes": [
+      "Subquery Scan",
+      "Limit",
+      "Index Scan"
+    ],
+    "relations_scanned": 1,
+    "uses_vector_index": true,
+    "indexes": [
+      "document_chunk_p_00000000_0000_40_37965e58c97e_vector_idx"
+    ]
+  },
+  "vector_index_mb": 468.6,
+  "text_index_mb": 10.8,
+  "other_index_mb": 18.6,
+  "total_index_mb": 498.1,
+  "heap_mb": 1108.5,
+  "index_count": 125,
+  "configuration": {
+    "index_method": "hnsw",
+    "postgres": "18.6 (Debian 18.6-1.pgdg13+2)",
+    "pgvector": "0.8.6",
+    "settings": {
+      "effective_cache_size": "5242888kB",
+      "maintenance_work_mem": "25165824kB",
+      "max_locks_per_transaction": "64",
+      "max_parallel_maintenance_workers": "4",
+      "shared_buffers": "2621448kB",
+      "work_mem": "262144kB"
+    },
+    "environment": {
+      "python": "3.11.16",
+      "packages": {
+        "sqlalchemy": "2.0.50",
+        "psycopg2-binary": "2.9.12",
+        "psycopg": "3.3.4",
+        "pgvector": "0.4.2",
+        "alembic": "1.18.4"
+      },
+      "pins": {
+        "sqlalchemy": "2.0.50",
+        "psycopg": "3.3.4",
+        "alembic": "1.18.4",
+        "psycopg2-binary": "2.9.12",
+        "pgvector": "0.4.2"
+      },
+      "image": "ghcr.io/open-webui/open-webui:dev",
+      "image_digest": "sha256:8e76f0c10e10566e778dea51d24ce1a3885da05a8275c1c81d9dceb124f1da7f"
+    }
+  }
+}
+
+######## 2026-09-18T09:15:21+02:00 [d5] fin
